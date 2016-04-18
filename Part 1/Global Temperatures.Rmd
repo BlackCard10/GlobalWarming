@@ -1,0 +1,208 @@
+---
+output:
+  knitrBootstrap::bootstrap_document:
+    theme: Slate
+    theme.chooser: FALSE
+    menu: FALSE
+---
+\
+
+
+
+# Warming Temperatures Pt.1
+
+The scientific community at this point is nearly unanimous in their belief that global temperatures across the earth are rising and these higher temperatures are likely as a result of man made activities. The people at NASA have been kind enough to put together a great resource on the web with literature related to this fact that anyone can review that can be found here: [NASA](http://climate.nasa.gov/)
+
+
+I didn't want to repeat research that has already been done, but I have a few things that I don't know yet in detail about global warming that I've always wanted to know:   
+
+* What does warming actually look like in a given city?  What is the magnitude and can we use some statistical techniques to find out just how much the temperature at that location has changed?  
+
+* On average what does the warming look like across cities? Implicit in this question I think is, are there any cities where there is no warming at all or actually significant declines in temperatures?
+
+
+There is a lot to cover here, so I'm going to address each of these one project at a time. To begin, I'm going to take a look at Ho Chi Minh City in Vietnam.  The data for this analysis comes from our friends at Kaggle and Berkeley Earth: [Data](https://www.kaggle.com/berkeleyearth/climate-change-earth-surface-temperature-data) 
+
+```{r eval = TRUE, echo = FALSE, warning= FALSE, message=FALSE}
+
+# Load the packages
+library(dplyr)
+library(ggplot2)
+library(car)
+library(grid)
+library(gridExtra)
+
+
+# Read the data
+TempData  <-  read.csv("~/Desktop/R Project/GlobalLandTemperatures/GlobalLandTemperaturesByMajorCity.csv")
+
+
+# Subset the data for Ho Chi Minh City (in honorarium)
+HCMCTemps <- subset(TempData, City == "Ho Chi Minh City")
+
+
+# Missing data is bothersome. See if there are any spans of 100 years + w/o missing data
+StripYear <- function(x) substring(x, 1,4)
+HCMCTemps$Year <- sapply(HCMCTemps$dt, StripYear)
+HCMCTemps$Year <- as.numeric(HCMCTemps$Year)
+HCMCTBlanks <- subset(HCMCTemps, is.na(AverageTemperature) & is.na(AverageTemperatureUncertainty))
+YearBlanks <- unique(HCMCTBlanks$Year) # The span from 1863 and 2012 does not exhibit any missing data
+
+
+# Subset the HCMCTemps data to contain only 1863 to 2012
+WorkingHCMCTemps <- subset(HCMCTemps, Year <= 2012 & Year > 1862)
+WorkingHCMCTemps$dt <- as.Date(WorkingHCMCTemps$dt)
+
+
+# Create an aggregated temp X year dataset
+TempYear <- WorkingHCMCTemps %>% 
+            select(Year, AverageTemperature, AverageTemperatureUncertainty) %>% 
+            group_by(Year) %>% 
+            summarise(mean(AverageTemperature), mean(AverageTemperatureUncertainty))
+
+names(TempYear) <- c("Year","MeanTemp", "AverageTemperatureUncertainty")
+
+```
+
+
+
+## Overview
+
+There are two charts below. The top is a review of the average annual temperature in Ho Chi Minh City from 1862 to 2012. The second chart below is a look at the average uncertainty in the measurement over time.  What we can see is there is a strong trend up and to the right in the temperature chart, while the uncertainty of the measurement decreases over time.
+
+\
+
+
+```{R echo = FALSE, eval = TRUE, fig.width = 9, fig.height = 9}
+
+# Plot the Dataset & a trendline
+G1 <- ggplot(TempYear, aes(x = Year, y = MeanTemp)) + 
+        geom_point() + 
+        geom_smooth(method = "lm", se = FALSE) +
+        theme(plot.title = element_text(size = 11)) +
+        ggtitle("Average Temperature(Celcius)")
+
+
+
+G2 <- ggplot(TempYear, aes(x = Year, y = AverageTemperatureUncertainty)) +
+      geom_point() + 
+      geom_smooth() +
+      theme(plot.title = element_text(size = 11)) +
+      ggtitle("Average Uncertainty in Measurement")
+
+grid.arrange(G1, G2)
+
+``` 
+
+
+
+
+## Splitting Time
+
+From here, the next thought that came to mind for me was, if we were to cut the temperature data in half (by date) and compare the two periods side by side, what does the median temp of each subset look like and how much higher is the mean/median in the later period than in the earlier?  
+
+
+
+```{r, echo = FALSE, eval = TRUE, fig.width= 9, fig.height=9}
+
+# Add a 1/2 column to mark the first/second half of the data respectively
+WorkingHCMCTemps[1:900,"Half"] <- 1
+WorkingHCMCTemps$Half[901:1800] <- 2
+Testset1 <- data.frame(WorkingHCMCTemps$AverageTemperature[1:900])
+Testset2 <- data.frame(WorkingHCMCTemps$AverageTemperature[901:1800])
+names(Testset1) <- ("Temp")
+names(Testset2) <- ("Temp")
+WorkingHCMCTemps$Half <- as.factor(WorkingHCMCTemps$Half)
+
+# Plot a box and whiskery chart with the mean Monthly temps by first and second half 
+B1 <- ggplot(WorkingHCMCTemps, aes(Half, AverageTemperature, group = Half, fill = Half)) + 
+      scale_fill_discrete(name = "Time Period", 
+      labels = c("1863 - 1938", "1939 - 2012")) +
+      ggtitle(" Ho Chi Minh City Average Monthly Temperature (Celcius)") + 
+      theme(plot.title = element_text(size = 14), 
+      axis.text.x = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_text(size = 12, margin = margin(0, 20, 0, 0)),
+      legend.text = element_text(size = 12)) +
+      geom_boxplot()
+B1 
+```
+\
+
+
+The details of mean and median temps in the first half and second half of the dataset are in the chart below. As you already could see from the charts above, the second half median temp is higher than the first.  Next, let's test differences between the first and second half mean temps to see if these differences are statisticaly significant.  
+\
+
+
+
+```{r, echo = FALSE, warning = FALSE}
+
+TestSummary <- data.frame(round(mean(Testset1$Temp),3), round(mean(Testset2$Temp),3), 
+                          round(median(Testset1$Temp),3), round(median(Testset2$Temp),3))
+TestMatrix <- matrix(TestSummary, nrow = 2, byrow = TRUE)
+dimnames(TestMatrix) <- list(c("Mean", "Median"), c("1863 - 1938", "1939 - 2012"))
+
+knitr::kable(TestMatrix, caption = "Figure 1: Median and Mean Temperature, 1H & 2H")
+
+```
+
+
+## Significance Testing
+
+First we're going to investigate the QQplots and histograms to see if our data are approximately normally distributed.  The QQplot and histogram below are for the H1, (first half), dataset.   What we notice is that the data do not appear to be noramlly distributed.  We see a fare amount of skew in the data, which would tend to make sense to me if I think of it in this manner: Vietnam is simply just hot most of the time. There tends to be many more months and years where temperatures tend towards the warmer side.  
+
+```{r echo = FALSE, eval = TRUE}
+
+# QQplot across set 1 and 2 respectively
+QQ1 <- qqnorm(WorkingHCMCTemps$AverageTemperature[1:900])
+qqline(WorkingHCMCTemps$AverageTemperature[1:900], col = "red")
+
+H1 <- ggplot(Testset1, aes(x = Temp)) + 
+      geom_histogram(col = "red", fill= "lightblue",  bins = 30) +
+      ggtitle("1H Temperature Distribution")
+
+H1 
+```
+\
+
+Looking at the QQplot and the histogram for H2, the second half, I notice a few interesting things.  The number of observations in the range between 28-30 degrees celcius is much higher than in the first half, which again fits our general theme of warming over time. However, again the data is not approximately normal and shows a fair amount of skew towards higher temps. 
+
+\
+
+```{r echo = FALSE, eval = TRUE}
+
+QQ2 <- qqnorm(WorkingHCMCTemps$AverageTemperature[901:1800])
+qqline(WorkingHCMCTemps$AverageTemperature[901:1800], col = 'red')
+
+H2 <- ggplot(Testset2, aes(x = Temp)) + 
+      geom_histogram(col = "red", fill= "lightblue",  bins = 30) +
+      ggtitle("2H Temperature Distribution")
+
+H2
+```
+\
+
+Because the sample size for each set H1 and H2 is large, n = 900 for each, we're going to assume that the t-distribution tends to be approximately normal for our test case.  By doing so, we could make the argument that it is appropriate to ignore the requirement of normality in our datasets.  In addition, I'm going to use Welch's T test rather than Students T to take care of the homogeneity of variance requirement.  The results of the call are below.  
+
+
+```{r, echo = FALSE, eval = TRUE}
+
+# Test for the difference in means between the two datasets.  Use Welches T.  
+Tresult <- t.test(Testset1, Testset2)
+Tvector <- c(Tresult$method, round(Tresult$statistic,3), Tresult$p.value, round(Tresult$conf.int,5), round(Tresult$estimate,5))
+TDetail <- matrix(Tvector, nrow = 1, dimnames = list(c("Results"), 
+                        c("Method", "T Statistic", "P.Value", "Conf.Int(LB)", "Conf.Int(UB)", "Mean of H1", "Mean of H2")))
+
+knitr::kable(TDetail, caption = "Figure 2: T Test Results, 1H & 2H")
+```
+\
+
+Looking at the data above, I interpret it as follows: it is likely that the difference in mean temperature in Ho Chi Minh City between the first and second half of the dataset is significant. This tends to support the observation that Ho Chi Minh City is in fact warmer, just as we have heard in pronouncments from major scientists.  
+
+# Warming Temperatures Pt.2
+
+For the second part of this analysis, because of the experience that I wanted the user to have, I've created a standalone web application that can be used to answer the question that I posed above: what does warming look like across all major cities?  My answer can be found here: [WarmingPT2](https://funwithnumbers.shinyapps.io/GlobalTemperaturesPt2-HeatMap/)
+
+
+
+

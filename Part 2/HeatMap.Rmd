@@ -1,0 +1,145 @@
+---
+output: 
+  html_document: 
+    css: Lumen.css
+runtime: shiny
+---
+
+```{r echo = FALSE, eval = TRUE, warning=FALSE, message=FALSE }
+
+# Load the packages
+library(dplyr)
+library(ggplot2)
+library(car)
+library(leaflet)
+library(DT)
+library(data.table)
+```
+
+
+```{r eval = TRUE, echo = FALSE, messages = FALSE,warning=FALSE}
+
+# Read the data
+TempData  <-  read.csv("GlobalLandTemperaturesByMajorCity.csv", stringsAsFactors = FALSE)
+Locations <- read.csv("Locations.csv", header = TRUE)
+TempData <- tbl_df(TempData)
+TempData$dt <- as.Date(TempData$dt)
+TempData <- na.omit(TempData)
+
+# Format a year field column
+TempData$Year <- format(TempData$dt, '%Y')
+
+# Use Data.table to keep only those rows with complete 12 month observations
+TempData <- data.table(TempData)
+setkey(TempData,City,Year)
+Test1 <- TempData[.(TempData[,.N,by=.(City,Year)][N==12,!"N",with=F])]
+
+
+# Calculate the mean temeperature, by city, every year
+CYMeanTemp <- as.data.frame(Test1) %>% group_by(City, Year) %>% summarise(mean(AverageTemperature))
+names(CYMeanTemp) <- c("City", "Year", "MeanTemp")
+
+
+# Create a list containing the mean temperatures for the second and first half of the data for each city
+CYMeanTemp <- as.data.frame(CYMeanTemp)
+CityNames <- unique(CYMeanTemp$City)
+CitySubsets <- list()
+Mean1H <- c()
+Mean2H <- c()
+for (i in 1:length(CityNames)) {
+  CitySubsets[[i]] <- subset(CYMeanTemp, City == CityNames[i])
+  Mean1H[i] <-  mean(as.data.frame(CitySubsets[i])[1:round(1/2*length(CitySubsets[[i]][,1])),c("MeanTemp")])
+  Mean2H[i] <- mean(as.data.frame(CitySubsets[i])[(1 + round(1/2*length(CitySubsets[[i]][,1]))):length(CitySubsets[[i]][,1]), c("MeanTemp")])
+}
+names(CitySubsets) <- CityNames
+
+# Create a dataframe to hold the most important high level info from the dataset
+MasterDF <- cbind(CityNames, Locations, Mean1H, Mean2H)
+
+# Take the difference between Mean2H and Mean1H
+MasterDF <- MasterDF %>% mutate(Warming = Mean2H - Mean1H)
+colnames(MasterDF)[1] <- "City"
+colnames(MasterDF)[6] <- "Change (°C) (2H-1H)"
+
+```
+
+
+```{r, eval = TRUE, echo=FALSE}
+
+ui <- bootstrapPage(
+ tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
+  leafletOutput("map", width = "100%", height = "100%"),
+  absolutePanel(top = 10, right = 10)
+)
+
+pal <- colorNumeric(
+  palette = "OrRd",
+  domain = MasterDF$`Change (°C) (2H-1H)`
+)
+
+
+server <- function(input, output, session) {
+  
+output$map <- renderLeaflet({
+  leaflet(MasterDF) %>%
+      addProviderTiles("CartoDB.DarkMatterNoLabels",
+        options = providerTileOptions(noWrap = FALSE)
+      ) %>%
+      addCircles(lng = ~lon, lat = ~lat, weight = 2, radius = 100000, color = pal(MasterDF$`Change (°C) (2H-1H)`), 
+                 popup = ~paste0("<strong> City: </strong>",
+                                MasterDF$City,
+                                "<strong> Change (°C) (2H-1H): </strong>",
+                                round(MasterDF$`Change (°C) (2H-1H)`,5))) %>%
+      addLegend("bottomright", pal = pal, values = MasterDF$`Change (°C) (2H-1H)`,
+      title = "Change (°C) 2H-1H",
+      labFormat = labelFormat(suffix = "°"),
+      opacity = 1)
+  })
+}
+
+shinyApp(ui, server)
+
+```
+
+\
+
+
+
+
+
+
+```{r, eval = TRUE, echo = FALSE}
+
+# Create a dataframe, DF, that will create a visual table in markdown with summary information. 
+roundit <- function(x) round(x,5)
+DF <- as.data.frame(sapply(MasterDF[,4:6], roundit))
+DF <- cbind(MasterDF[,1:3], DF)
+TableFinal <- DF[,c("City", "Mean1H", "Mean2H", "Change (°C) (2H-1H)")]
+
+datatable(TableFinal)
+
+```
+
+\
+
+
+
+# Warming Temperatures Pt. 2
+
+Picking up where I left off before in Warming Part 1, we ended with the question of what the differences in mean temperatures were across all cities. The visualization above is an attempt to solve that question. Each of the datapoints takes each of the sub-datasets for any given city, splits each time series in half and compares the mean temp of the second time series to the first.   What we can see above is that for any given city, all of the mean temperatures for the second half (2H) are higher than the first(1H).\*  
+
+The table below the map contains summarized data for each of the cities.  
+
+##Comments
+
+Visualization is a great way to understand trends/themes in *vast* amounts of data.  In this case, I think it allows me to understand the degree to which warming is a global trend that all people are dealing with. 100 different cities and all continents (except antarctica, I couldn't find any data) are represented here. 
+
+I also see interesting clusters of data points that tend to be on the higher or lower end of the temperature change spectrum.  Did you notice the cluster of higher temperatures on the eastern seaboard of the Asian continent?  This could be a great point of further study, to investigate if this is a random occurance, an interesting annecdote, or more.  Moments of controlled chaos, like finding new insights to test, make data analysis one of my favorite things to do.  For people with inquisitive minds, it's a great way to discover the world.  To quote Hadley Wickham, an idol of mine who inspired this journey in part, "Fundamentally learning about the world through data is really, really cool.” 
+
+\
+
+ 
+\* You'll notice that the mean 1H & 2H for Ho Chi Min City is a bit different than in part 1, but this is because of my desire to use as much data as possible e.g. a larger non contiguous dataset,  rather than the previous continous time set, for each city. 
+
+\
+
